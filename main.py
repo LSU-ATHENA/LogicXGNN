@@ -6,6 +6,9 @@ import torch.optim as optim
 from explain_gnn import *
 from load_data import load_data      # your function from before
 from gnn import GCN, GIN, GAT, GraphSAGE       # your GCN class
+
+#from gin import GIN
+
 from utils import train, test, load_model   # your train/test/save functions
 from build_logicGNN import *
 from collections import defaultdict
@@ -87,8 +90,8 @@ def main():
     model = get_model(
     args.arch,
     in_channels=train_dataset[0].x.shape[1],
-    hidden_channels=32,
-    out_channels=32,
+    hidden_channels=64,
+    out_channels=64,
     num_classes=2,
     use_conv3=use_conv3
 ).to(device)
