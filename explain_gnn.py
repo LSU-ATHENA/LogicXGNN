@@ -71,16 +71,16 @@ def get_all_activations_graph(t_loader, model, device, optimizer=None):
                 activations_dict['conv3'][graph_idx] = conv3_split[i]
 
             activations_dict['global_pool'][graph_idx] = act['global_pool'][i].unsqueeze(0)
-            activations_dict['fc'][graph_idx] = act['fc'][i].unsqueeze(0)
+            activations_dict['fc'][graph_idx] = act['logits'][i].unsqueeze(0)
             graph_idx += 1
 
     pred_tensor = torch.cat(pred_li, dim=0)
     y_tensor = torch.cat(y_li, dim=0)
 
     gnn_graph_embed = torch.cat(
-        [activations_dict['global_pool'][i] for i in range(len(activations_dict['global_pool']))],
-        dim=0
-    ).cpu().numpy()
+    [activations_dict['global_pool'][i] for i in range(len(activations_dict['global_pool']))],
+    dim=0
+    ).detach().cpu().numpy()
 
     return pred_tensor.cpu(), y_tensor.cpu(), x_dict, edge_dict, activations_dict, gnn_graph_embed
 

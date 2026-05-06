@@ -41,38 +41,235 @@ class GCN(nn.Module):
 # ==============================
 # 🔹 GIN
 # ==============================
-class GIN(nn.Module):
-    def __init__(self, in_channels, hidden_channels, out_channels, num_classes=2, use_conv3=True):
-        super(GIN, self).__init__()
-        self.use_conv3 = use_conv3
+class GIN(torch.nn.Module):
+    def __init__(self, num_features, num_classes, num_layers, hidden):
+        super().__init__()
+        self.num_layers = num_layers
+        self.conv1 = GINConv(
+            Sequential(
+                Linear(num_features, hidden),
+                ReLU(inplace=False),
+                Linear(hidden, hidden),
+                ReLU(inplace=False),
+                BN(hidden),
+            ), train_eps=True)
+        self.convs = torch.nn.ModuleList()
+        for i in range(num_layers - 1):
+            self.convs.append(
+                GINConv(
+                    Sequential(
+                        Linear(hidden, hidden),
+                        ReLU(inplace=False),
+                        Linear(hidden, hidden),
+                        ReLU(inplace=False),
+                        BN(hidden),
+                    ), train_eps=True))
+        self.lin1 = Linear(hidden, hidden)
+        self.lin2 = Linear(hidden, num_classes)
 
-        nn1 = nn.Sequential(nn.Linear(in_channels, hidden_channels), nn.ReLU(), nn.Linear(hidden_channels, hidden_channels))
-        self.conv1 = GINConv(nn1)
+    def reset_parameters(self):
+        self.conv1.reset_parameters()
+        for conv in self.convs:
+            conv.reset_parameters()
+        self.lin1.reset_parameters()
+        self.lin2.reset_parameters()
 
-        nn2 = nn.Sequential(nn.Linear(hidden_channels, hidden_channels), nn.ReLU(), nn.Linear(hidden_channels, hidden_channels))
-        self.conv2 = GINConv(nn2)
+    def get_hid_repr(self, data, layer=0):
+        x, edge_index = data.x.float(), data.edge_index
+        x = self.conv1(x, edge_index)
+        if layer <= 0:
+            return x
+        for depth, conv in enumerate(self.convs, start=1):
+            x = conv(x, edge_index)
+            if layer <= depth:
+                return x
+        return x
 
-        if self.use_conv3:
-            nn3 = nn.Sequential(nn.Linear(hidden_channels, out_channels), nn.ReLU(), nn.Linear(out_channels, out_channels))
-            self.conv3 = GINConv(nn3)
-            self.fc = nn.Linear(out_channels, num_classes)
-        else:
-            self.fc = nn.Linear(hidden_channels, num_classes)
+    def forward(self, data):
+        x, edge_index, batch = data.x.float(), data.edge_index, data.batch
+        x = self.conv1(x, edge_index)
+        for conv in self.convs:
+            x = conv(x, edge_index)
+        x = global_mean_pool(x, batch)
+        # x = global_add_pool(x, batch)
+        x = F.relu(self.lin1(x))
+        x = F.dropout(x, p=0.5, training=self.training)
+        x = self.lin2(x)
+        return F.log_softmax(x, dim=-1)
 
-    def forward(self, x, edge_index, batch):
-        acts = {}
-        x = self.conv1(x, edge_index); acts['conv1'] = x.detach().clone()
-        x = F.relu(x); acts['relu1'] = x.detach().clone()
+    def get_gemb(self,data):
+        x, edge_index, batch = data.x.float(), data.edge_index, data.batch
+        x = self.conv1(x, edge_index)
+        for conv in self.convs:
+            x = conv(x, edge_index)
+        x = global_mean_pool(x, batch)
+        return x[0]
 
-        x = self.conv2(x, edge_index); acts['conv2'] = x.detach().clone()
-        x = F.relu(x); acts['relu2'] = x.detach().clone()
+    def get_graph_emb(self, x, edge_index):
+        x = x.float()
+        batch = torch.zeros(x.shape[0], dtype=torch.int64, device=x.device)
+        x = self.conv1(x, edge_index)
+        for conv in self.convs:
+            x = conv(x, edge_index)
+        return torch.cat(
+            [global_add_pool(x, batch)[0], global_mean_pool(x, batch)[0], global_max_pool(x, batch)[0]],
+            dim=-1,
+        )
 
-        if self.use_conv3:
-            x = self.conv3(x, edge_index); acts['conv3'] = x.detach().clone()
+    def fwd_weight(self, x, edge_index, edge_weight=None):
+        batch = torch.zeros(x.shape[0]).to(x.device).type(torch.int64) 
+        if edge_weight is None:
+            edge_weight = torch.ones(edge_index.shape[1]).float().to(edge_index.device)
+        x = self.conv1(x, edge_index)
+        for conv in self.convs:
+            x = conv(x, edge_index)
+        x = global_mean_pool(x, batch)
+        x = F.relu(self.lin1(x))
+        x = F.dropout(x, p=0.5, training=self.training)
+        x = self.lin2(x)
+        return F.log_softmax(x, dim=-1)
 
-        x = global_mean_pool(x, batch); acts['global_pool'] = x.detach().clone()
-        x = self.fc(x); acts['fc'] = x.detach().clone()
-        return x, acts
+
+    def fwd(self, x, edge_index, de=None, epsilon=None, edge_weight=None): 
+        batch = torch.zeros(x.shape[0]).to(x.device).type(torch.int64) 
+        if edge_weight is None:
+            edge_weight = torch.ones(edge_index.shape[1]).float().to(edge_index.device)
+        if de is not None:
+            edge_weight[de]=epsilon
+            edl, edr = edge_index[0,de], edge_index[1,de]
+            rev_de = int((torch.logical_and(edge_index[0]==edr, edge_index[1]==edl)==True).nonzero()[0])
+            edge_weight[rev_de]=epsilon
+        x = self.conv1(x.float(), edge_index, edge_weight=edge_weight)
+        for o, conv in enumerate(self.convs):
+            x = conv(x, edge_index, edge_weight=edge_weight)
+        x = global_mean_pool(x, batch)
+        x = F.relu(self.lin1(x))
+        x = F.dropout(x, p=0.5, training=self.training)
+        x = self.lin2(x)
+        # return x
+        return F.log_softmax(x, dim=-1)
+
+    def fwd_cam(self, data, edge_weight):
+        x, edge_index, batch = data.x.float(), data.edge_index, data.batch
+        x = self.conv1(x, edge_index, edge_weight=edge_weight)
+        for conv in self.convs:
+            x = conv(x, edge_index, edge_weight=edge_weight)
+        x = global_mean_pool(x, batch)
+        # x = global_add_pool(x, batch)
+        x = F.relu(self.lin1(x))
+        x = F.dropout(x, p=0.5, training=self.training)
+        x = self.lin2(x)
+        # return F.softmax(x, dim=-1)
+        return x
+
+    def fwd_base(self, x, edge_index):
+        x, edge_index = x.float(), edge_index
+        batch = torch.zeros(x.shape[0]).to(x.device).type(torch.int64) 
+
+        x = self.conv1(x, edge_index)
+        for conv in self.convs:
+            x = conv(x, edge_index)
+        x = global_mean_pool(x, batch)
+        x = F.relu(self.lin1(x))
+        x = F.dropout(x, p=0.5, training=self.training)
+        x = self.lin2(x)
+        return x
+    
+    def fwd_base_other(self, x, edge_index, ie, value):
+        batch = torch.zeros(x.shape[0]).to(x.device).type(torch.int64) 
+        edge_weight = torch.ones(edge_index.shape[1]).float().to(edge_index.device)
+        edge_weight[ie]=value
+        
+        x = self.conv1(x.float(), edge_index, edge_weight=edge_weight)
+        for conv in self.convs:
+            x = conv(x, edge_index, edge_weight=edge_weight)
+        x = global_mean_pool(x, batch)
+        x = F.relu(self.lin1(x))
+        x = F.dropout(x, p=0.5, training=self.training)
+        x = self.lin2(x)
+        return F.log_softmax(x, dim=-1)
+
+    def __repr__(self):
+        return self.__class__.__name__
+
+class GIN_NC(torch.nn.Module):
+    def __init__(self, num_features, num_classes, num_layers, hidden):
+        super().__init__()
+        self.num_layers = num_layers
+        self.conv1 = GINConv(
+            Sequential(
+                Linear(num_features, hidden),
+                ReLU(inplace=False),
+                Linear(hidden, hidden),
+                ReLU(inplace=False),
+                BN(hidden),
+            ), train_eps=True)
+        self.convs = torch.nn.ModuleList()
+        for i in range(num_layers - 1):
+            self.convs.append(
+                GINConv(
+                    Sequential(
+                        Linear(hidden, hidden),
+                        ReLU(inplace=False),
+                        Linear(hidden, hidden),
+                        ReLU(inplace=False),
+                        BN(hidden),
+                    ), train_eps=True))
+        self.lin1 = Linear(hidden, hidden)
+        self.lin2 = Linear(hidden, num_classes)
+
+    def reset_parameters(self):
+        self.conv1.reset_parameters()
+        for conv in self.convs:
+            conv.reset_parameters()
+        self.lin1.reset_parameters()
+        self.lin2.reset_parameters()
+
+    def forward(self, x, edge_index):
+        x = self.conv1(x, edge_index)
+        for conv in self.convs:
+            x = conv(x, edge_index)
+        x = F.relu(self.lin1(x))
+        x = F.dropout(x, p=0.5, training=self.training)
+        x = self.lin2(x)
+        return x
+        return F.softmax(x, dim=-1)
+
+    def fwd_eval(self, x, edge_index):
+        x = self.conv1(x, edge_index)
+        for conv in self.convs:
+            x = conv(x, edge_index)
+        x = F.relu(self.lin1(x))
+        x = F.dropout(x, p=0.5, training=self.training)
+        x = self.lin2(x)
+        return F.softmax(x, dim=-1)
+
+    def fwd_cam(self, x, edge_index, edge_weight):
+        x = self.conv1(x, edge_index, edge_weight=edge_weight)
+        for conv in self.convs:
+            x = conv(x, edge_index, edge_weight=edge_weight)
+        x = F.relu(self.lin1(x))
+        x = F.dropout(x, p=0.5, training=self.training)
+        x = self.lin2(x)
+        return x
+    
+    def fwd(self, x, edge_index, de=None, epsilon=None):
+        edge_weight = torch.ones(edge_index.shape[1]).float().to(edge_index.device)
+        if de is not None:
+            edge_weight[de]=epsilon
+            edl, edr = edge_index[0,de], edge_index[1,de]
+            rev_de = int((torch.logical_and(edge_index[0]==edr, edge_index[1]==edl)==True).nonzero()[0])
+            edge_weight[rev_de]=epsilon
+        x = self.conv1(x, edge_index, edge_weight=edge_weight)
+        for conv in self.convs:
+            x = conv(x, edge_index, edge_weight=edge_weight)
+        x = F.relu(self.lin1(x))
+        x = F.dropout(x, p=0.5, training=self.training)
+        x = self.lin2(x)
+        return x
+
+    def __repr__(self):
+        return self.__class__.__name__
 
 
 # ==============================

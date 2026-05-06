@@ -1,7 +1,7 @@
 import torch
 import torch.nn.functional as F
 from torch_geometric.datasets import TUDataset, MoleculeNet
-from torch_geometric.data import DataLoader
+from torch_geometric.loader import DataLoader
 from torch_geometric.transforms import BaseTransform
 from torch_geometric.utils import degree
 from torch_geometric.datasets import BAMultiShapesDataset
@@ -30,8 +30,8 @@ atom_types = sorted(original_atom_dict.keys())
 atom_to_idx = {atom_num: idx for idx, atom_num in enumerate(atom_types)}
 num_atom_types = len(atom_types)
 atom_type_dict = {idx: original_atom_dict[atom_types[idx]] for idx in range(num_atom_types)}
-#device = torch.device('cuda' if torch.cuda.is_available() else 'cpu')
-device = torch.device('cpu')
+device = torch.device('cuda' if torch.cuda.is_available() else 'cpu')
+#device = torch.device('cpu')
 def convert_atoms_to_onehot(x, atom_to_idx, num_atom_types):
     """Convert atomic numbers to one-hot encodings - ONLY use first column (atomic numbers)"""
     atomic_numbers = x[:, 0].long()

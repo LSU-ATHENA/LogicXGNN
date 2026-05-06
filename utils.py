@@ -24,14 +24,21 @@ def train(model, loader, optimizer, criterion, device):
 
 def test(model, loader, device):
     model.eval()
-    correct, total = 0, 0
+    correct = 0
+    total = 0
+
     with torch.no_grad():
         for data in loader:
             data = data.to(device)
+
             out, _ = model(data.x, data.edge_index, data.batch)
-            _, predicted = out.max(dim=1)
-            correct += (predicted == data.y).sum().item()
-            total += data.num_graphs
+
+            pred = out.argmax(dim=1)
+            y = data.y.view(-1)
+
+            correct += (pred == y).sum().item()
+            total += y.size(0)
+
     return correct / total
 
 
