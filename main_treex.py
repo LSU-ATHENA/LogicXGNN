@@ -69,18 +69,27 @@ except AttributeError: pass
 
 try:n_fea, n_cls = dataset.num_features, dataset.num_classes 
 except AttributeError: n_fea, n_cls = dataset.num_features, 2
+
+print("============== Features/Classes ===============")
+print("Number of features", n_fea)
+print("Number of Classes", n_cls)
+
 explain_ids = detect_exp_setting(dataname, dataset)
 motif_nodes_number = detect_motif_nodes(dataname)
+
+print("Explain IDs", explain_ids)
+print("motif node number", motif_nodes_number)
 
 gnn_model = load_model(dataname, args.gnn, n_fea, n_cls)
 gnn_model.eval()
 
-print(f"GNN Model Loaded. {dataname}, {task_type}. \nsize of Motif: {motif_nodes_number}. num of samples to explain: {len(explain_ids)}")
-print(f'Dataset={dataname}-{args.gnn}-lclus{args.clusters}-gclus{args.into_st}-{args.local_cluster}-{args.lmda}')
-
 model = gnn_model
 model.eval()
 model_path = f'gin_Mutagenicity.model'
+
+for name, param in model.named_parameters():
+    print(name, param.shape)
+
 
 train_dataset, test_dataset, train_loader, test_loader, device = load_data(args.dataset, args.seed)
 y_labels_flat=[]
@@ -116,7 +125,6 @@ def test_with_acc(model, loader, device, dataname, acc_fn):
 
             pred = out.argmax(dim=1)
             y = data.y.view(-1).to(device)
-
             batch_acc = (pred == y).float().mean().item()
 
             Hnodes = acts.get("Hnodes", None)
@@ -124,7 +132,6 @@ def test_with_acc(model, loader, device, dataname, acc_fn):
             print("Hnodes type:", type(Hnodes))
 
             if Hnodes is None:
-                # fallback: skip if not available
                 continue
 
             node = data.num_nodes

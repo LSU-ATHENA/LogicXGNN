@@ -5,11 +5,11 @@ import torch.nn as nn
 import torch.optim as optim
 from explain_gnn import *
 from load_data import load_data      # your function from before
-from gnn import GCN, GIN, GAT, GraphSAGE       # your GCN class
+from gnn import GCN, GAT, GraphSAGE       # your GCN class
 
-#from gin import GIN
+from gin import GIN
 
-from utils import train, test, load_model   # your train/test/save functions
+from utils import train, test#, load_model   # your train/test/save functions
 from build_logicGNN import *
 from collections import defaultdict
 from grounding import *
@@ -17,6 +17,17 @@ from sklearn.metrics import accuracy_score, precision_recall_fscore_support
 import time
 from sklearn.utils.class_weight import compute_class_weight
 import numpy as np
+
+
+from pathlib import Path
+import sys
+TREEX_REPO = Path("/home/fhlic/Desktop/Repositories/treex_temp/treex_temp").resolve()
+if str(TREEX_REPO) not in sys.path:
+    sys.path.insert(0, str(TREEX_REPO))
+from Utils.utils import load_model, check_task, detect_exp_setting, detect_motif_nodes
+
+
+
 # dataset-specific early stop thresholds
 stop_dict = {
     "BAMultiShapes": 0.8,
@@ -80,7 +91,7 @@ def main():
         if arch == "GCN":
             return GCN(in_channels, hidden_channels, out_channels, num_classes, use_conv3)
         elif arch == "GIN":
-            return GIN(in_channels, hidden_channels, out_channels, num_classes, use_conv3)
+            return GIN(in_channels, hidden_channels, out_channels, num_classes, use_conv3=False)
         elif arch == "GAT":
             return GAT(in_channels, hidden_channels, out_channels, num_classes, use_conv3=use_conv3)
         elif arch == "GraphSAGE":
@@ -92,9 +103,7 @@ def main():
     in_channels=train_dataset[0].x.shape[1],
     hidden_channels=64,
     out_channels=64,
-    num_classes=2,
-    use_conv3=use_conv3
-).to(device)
+    num_classes=2, use_conv3=False).to(device)
 
     optimizer = optim.Adam(model.parameters(), lr=0.005)
     criterion = nn.CrossEntropyLoss()
@@ -158,11 +167,10 @@ def main():
         model_path = f"./models/{args.dataset}_{args.seed}.pth"
     else:
         model_path = f"./models/{args.dataset}_{args.seed}_{args.arch}.pth"
-
     
     if args.load:
         # 🔹 Load pretrained weights
-        model = load_model(model, model_path, device=device)
+        model = load_model("Mutagenicity", "gin", 14, 2)
         test_acc = test(model, test_loader, device)
         print(f"Loaded model | Test Accuracy: {test_acc:.4f}")
     else:

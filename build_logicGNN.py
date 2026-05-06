@@ -12,7 +12,7 @@ import matplotlib.pyplot as plt
 from sklearn.metrics import accuracy_score, precision_recall_fscore_support
 from sklearn.utils.class_weight import compute_sample_weight
 def process_graph_predicates(graph_idx, train_x_dict, train_edge_dict, train_activations_dict, val_idx, threshold, use_embed = 1, k_hops=2):
-    node_act = (train_activations_dict['conv2'][graph_idx][:, val_idx] > threshold).int().numpy()
+    node_act = (train_activations_dict['conv2'][graph_idx][:, val_idx] > threshold).int().cpu().numpy()
     edges = train_edge_dict[graph_idx]
     unique_nodes = torch.unique(edges)
     
